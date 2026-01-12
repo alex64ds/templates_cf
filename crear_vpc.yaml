@@ -1,0 +1,111 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Plantilla CloudFormation para crear una VPC, una subred y una instancia EC2 completa
+
+Parameters:
+  VPCCIDR:
+    Type: String
+    Description: 'Bloque CIDR para la VPC (ej: 10.0.0.0/16)'
+    Default: 192.160.0.0/16
+
+  SubnetCIDR:
+    Type: String
+    Description: 'Bloque CIDR para la subred (ej: 10.0.1.0/24)'
+    Default: 192.160.1.0/24
+    
+  SubnetName:
+    Type: String
+    Description: "Nombre para etiquetar la subred"
+    Default: "mi-subnet-1"
+
+  VpcName:
+    Type: String
+    Description: Nombre para etiquetar la VPC
+    Default: mi-vpc-alex
+
+  KeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: "Nombre del KeyPair para acceder por SSH a la EC2"
+
+  InstanceType:
+    Type: String
+    Description: "Tipo de instancia EC2"
+    Default: t3.micro
+    AllowedValues:
+      - t2.micro
+      - t3.micro
+      - t3.small
+      - t3.medium
+
+  AMIId:
+    Type: AWS::EC2::Image::Id
+    Description: "ID de la AMI a usar (ej: Amazon Linux 2)"
+    Default: "ami-07ff62358b87c7116"
+
+Resources:
+  MiVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VPCCIDR
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Ref VpcName
+
+  MiSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MiVPC
+      CidrBlock: !Ref SubnetCIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Ref SubnetName
+
+  MiSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Permite SSH"
+      VpcId: !Ref MiVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: "sg-ssh"
+
+  MiEC2:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref AMIId
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      SubnetId: !Ref MiSubnet
+      SecurityGroupIds:
+        - !Ref MiSecurityGroup
+      Tags:
+        - Key: Name
+          Value: "instance-prueba"
+
+Outputs:
+  VPCId:
+    Description: ID de la VPC creada
+    Value: !Ref MiVPC
+
+  VPCidrOut:
+    Description: CIDR configurado en la VPC
+    Value: !Ref VPCCIDR
+
+  SubnetId:
+    Description: ID de la subred creada
+    Value: !Ref MiSubnet
+
+  InstanceId:
+    Description: ID de la instancia EC2 creada
+    Value: !Ref MiEC2
+
+  PublicIP:
+    Description: IP pública de la instancia EC2
+    Value: !GetAtt MiEC2.PublicIp
