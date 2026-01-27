@@ -1,39 +1,40 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: Stack con VPC + Subred Pública + IGW + EC2 + Subred Privada + NAT Gateway (us-east-1)
-Parameters:
 
+Parameters:
   IGW:
-    Description: Determine si se asociará un Internet gateway en north ginia
+    Description: Determine si se asociara un Internet Gateway
     Type: String
     Default: true
     AllowedValues:
       - true
       - false
 
-
 Conditions:
   IGW: !Equals [!Ref IGW, true]
-  IsUSEast1: !Equals [ !Ref "AWS::Region", "us-east-1" ]
-  IsUSWest2: !Equals [ !Ref "AWS::Region", "us-west-2" ]
+  IsUSEast1: !Equals [!Ref "AWS::Region", "us-east-1"]
 
 Resources:
 
   MyVPC:
     Type: AWS::EC2::VPC
     Properties:
-      CidrBlock: 10.0.0.0/20
-      EnableDnsSupport: true
-      EnableDnsHostnames: true
+      CidrBlock: !If
+        - IsUSEast1
+        - "10.0.0.0/20"
+        - "172.16.0.0/20"
       Tags:
         - Key: Name
           Value: MyVPC
-          
 
   PublicSubnet:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref MyVPC
-      CidrBlock: 10.0.1.0/24
+      CidrBlock: !If
+        - IsUSEast1
+        - "10.0.1.0/24"
+        - "172.16.1.0/24"
       MapPublicIpOnLaunch: true
       AvailabilityZone: !Select [0, !GetAZs ""]
       Tags:
@@ -44,7 +45,10 @@ Resources:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref MyVPC
-      CidrBlock: 10.0.2.0/24
+      CidrBlock: !If
+        - IsUSEast1
+        - "10.0.2.0/24"
+        - "172.16.2.0/24"
       MapPublicIpOnLaunch: false
       AvailabilityZone: !Select [0, !GetAZs ""]
       Tags:
@@ -59,14 +63,12 @@ Resources:
         - Key: Name
           Value: MyIGW
 
-
   AttachIGW:
     Condition: IGW
     Type: AWS::EC2::VPCGatewayAttachment
     Properties:
       VpcId: !Ref MyVPC
       InternetGatewayId: !Ref InternetGateway
-
 
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
@@ -84,7 +86,7 @@ Resources:
       DestinationCidrBlock: 0.0.0.0/0
       GatewayId: !Ref InternetGateway
 
-  SubnetRouteTableAssociation:
+  PublicSubnetRouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
       SubnetId: !Ref PublicSubnet
@@ -145,7 +147,10 @@ Resources:
     Type: AWS::EC2::Instance
     Properties:
       InstanceType: t2.micro
-      ImageId: ami-0ecb62995f68bb549
+      ImageId: !If
+      - IsUSEast1
+      - ami-0ecb62995f68bb549
+      - ami-0786adace1541ca80
       SubnetId: !Ref PublicSubnet
       SecurityGroupIds:
         - !Ref InstanceSecurityGroup

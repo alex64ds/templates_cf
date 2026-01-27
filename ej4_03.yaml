@@ -1,0 +1,126 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: ALB + Auto Scaling Group en multiples AZ usando mismo Security Group
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC donde se desplegara la infraestructura
+
+  PublicSubnets:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Subredes publicas en distintas AZ (mínimo 2)
+
+  ALBPublico:
+    Type: String
+    AllowedValues:
+      - "internet-facing"
+      - "internal"
+    Default: "internet-facing"
+    Description: Indica si el ALB será publico (internet-facing) o interno
+
+Conditions:
+  EsALBPublico: !Equals [ !Ref ALBPublico, "internet-facing" ]
+
+Resources:
+
+  ### Security Group compartido ###
+  SharedSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Permitir HTTP desde cualquier origen
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  ### Target Group ###
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Join
+        - "-"
+        - - vivalalandingzone
+          - Alex
+          - tg    
+      VpcId: !Ref VpcId
+      Protocol: HTTP
+      Port: 80
+      TargetType: instance
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+
+  ### Application Load Balancer ###
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Join
+        - "-"
+        - - vivalalandingzone
+          - Alex
+          - alb
+      Scheme: !If
+        - EsALBPublico
+        - internet-facing
+        - internal
+      Type: application
+      SecurityGroups:
+        - !Ref SharedSecurityGroup
+      Subnets: !Ref PublicSubnets
+
+  ### Listener ###
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+  ### Launch Template ###
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Join
+        - "-"
+        - - vivalalandingzone
+          - Alex
+          - lt
+      LaunchTemplateData:
+        ImageId: ami-0ecb62995f68bb549 
+        InstanceType: t2.micro
+        KeyName: vockey
+        SecurityGroupIds:
+          - !Ref SharedSecurityGroup
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            apt update
+            apt install -y apache2
+            systemctl enable apache2
+            systemctl start apache2
+            echo "Servidor $(hostname)" > /var/www/html/index.html
+
+  ### Auto Scaling Group ###
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier: !Ref PublicSubnets
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      MinSize: '2'
+      MaxSize: '4'
+      DesiredCapacity: '2'
+      TargetGroupARNs:
+        - !Ref TargetGroup
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 60
+
+Outputs:
+  LoadBalancerDNS:
+    Description: DNS público del Application Load Balancer
+    Value: !GetAtt LoadBalancer.DNSName
