@@ -1,9 +1,9 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: Stack con VPC + Subred Pública + IGW + EC2 + Subred Privada + NAT Gateway (us-east-1)
+Description: Stack con VPC + Subred Pública + Subred Privada + IGW + NAT Gateway + EC2
 
 Parameters:
   IGW:
-    Description: Determine si se asociara un Internet Gateway
+    Description: Determina si se asociara un Internet Gateway
     Type: String
     Default: true
     AllowedValues:
@@ -11,18 +11,30 @@ Parameters:
       - false
 
 Conditions:
-  IGW: !Equals [!Ref IGW, true]
-  IsUSEast1: !Equals [!Ref "AWS::Region", "us-east-1"]
+  UseIGW: !Equals [!Ref IGW, true]
+
+Mappings:
+  RegionMap:
+    us-east-1:
+      VPCCIDR: "10.0.0.0/20"
+      PublicSubnetCIDR: "10.0.1.0/24"
+      PrivateSubnetCIDR: "10.0.2.0/24"
+      AMI: "ami-0ecb62995f68bb549"
+    us-west-2:
+      VPCCIDR: "172.16.0.0/20"
+      PublicSubnetCIDR: "172.16.1.0/24"
+      PrivateSubnetCIDR: "172.16.2.0/24"
+      AMI: "ami-0786adace1541ca80"
 
 Resources:
 
   MyVPC:
     Type: AWS::EC2::VPC
     Properties:
-      CidrBlock: !If
-        - IsUSEast1
-        - "10.0.0.0/20"
-        - "172.16.0.0/20"
+      CidrBlock: !FindInMap
+        - RegionMap
+        - !Ref AWS::Region
+        - VPCCIDR
       Tags:
         - Key: Name
           Value: MyVPC
@@ -31,10 +43,10 @@ Resources:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref MyVPC
-      CidrBlock: !If
-        - IsUSEast1
-        - "10.0.1.0/24"
-        - "172.16.1.0/24"
+      CidrBlock: !FindInMap
+        - RegionMap
+        - !Ref AWS::Region
+        - PublicSubnetCIDR
       MapPublicIpOnLaunch: true
       AvailabilityZone: !Select [0, !GetAZs ""]
       Tags:
@@ -45,10 +57,10 @@ Resources:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref MyVPC
-      CidrBlock: !If
-        - IsUSEast1
-        - "10.0.2.0/24"
-        - "172.16.2.0/24"
+      CidrBlock: !FindInMap
+        - RegionMap
+        - !Ref AWS::Region
+        - PrivateSubnetCIDR
       MapPublicIpOnLaunch: false
       AvailabilityZone: !Select [0, !GetAZs ""]
       Tags:
@@ -56,7 +68,7 @@ Resources:
           Value: PrivateSubnet
 
   InternetGateway:
-    Condition: IGW
+    Condition: UseIGW
     Type: AWS::EC2::InternetGateway
     Properties:
       Tags:
@@ -64,7 +76,7 @@ Resources:
           Value: MyIGW
 
   AttachIGW:
-    Condition: IGW
+    Condition: UseIGW
     Type: AWS::EC2::VPCGatewayAttachment
     Properties:
       VpcId: !Ref MyVPC
@@ -74,11 +86,9 @@ Resources:
     Type: AWS::EC2::RouteTable
     Properties:
       VpcId: !Ref MyVPC
-      Tags:
-        - Key: Name
-          Value: PublicRouteTable
 
   PublicRoute:
+    Condition: UseIGW
     Type: AWS::EC2::Route
     DependsOn: AttachIGW
     Properties:
@@ -92,31 +102,26 @@ Resources:
       SubnetId: !Ref PublicSubnet
       RouteTableId: !Ref PublicRouteTable
 
-  # NAT Gateway
   PublicEIP:
+    Condition: UseIGW
     Type: AWS::EC2::EIP
-    DependsOn: AttachIGW
     Properties:
       Domain: vpc
 
   NATGateway:
+    Condition: UseIGW
     Type: AWS::EC2::NatGateway
     Properties:
       AllocationId: !GetAtt PublicEIP.AllocationId
       SubnetId: !Ref PublicSubnet
-      Tags:
-        - Key: Name
-          Value: MyNATGateway
 
   PrivateRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
       VpcId: !Ref MyVPC
-      Tags:
-        - Key: Name
-          Value: PrivateRouteTable
 
   PrivateRoute:
+    Condition: UseIGW
     Type: AWS::EC2::Route
     Properties:
       RouteTableId: !Ref PrivateRouteTable
@@ -139,18 +144,15 @@ Resources:
           FromPort: 22
           ToPort: 22
           CidrIp: 0.0.0.0/0
-      Tags:
-        - Key: Name
-          Value: EC2SG
 
   EC2Instance:
     Type: AWS::EC2::Instance
     Properties:
       InstanceType: t2.micro
-      ImageId: !If
-      - IsUSEast1
-      - ami-0ecb62995f68bb549
-      - ami-0786adace1541ca80
+      ImageId: !FindInMap
+        - RegionMap
+        - !Ref AWS::Region
+        - AMI
       SubnetId: !Ref PublicSubnet
       SecurityGroupIds:
         - !Ref InstanceSecurityGroup
@@ -160,9 +162,5 @@ Resources:
 
 Outputs:
   EC2PublicIP:
-    Description: Dirección IP pública de la instancia EC2
+    Description: IP pública de la EC2
     Value: !GetAtt EC2Instance.PublicIp
-
-  NATGatewayId:
-    Description: NAT Gateway creado
-    Value: !Ref NATGateway

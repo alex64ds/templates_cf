@@ -1,14 +1,10 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: ALB + Auto Scaling Group en multiples AZ usando mismo Security Group
+Description: ALB + Auto Scaling Group con VPC y 2 subredes creadas automáticamente
 
 Parameters:
-  VpcId:
-    Type: AWS::EC2::VPC::Id
-    Description: VPC donde se desplegara la infraestructura
-
-  PublicSubnets:
-    Type: List<AWS::EC2::Subnet::Id>
-    Description: Subredes publicas en distintas AZ (mínimo 2)
+  NombreBase:
+    Type: String
+    Default: vivalalandingzone
 
   ALBPublico:
     Type: String
@@ -16,19 +12,116 @@ Parameters:
       - "internet-facing"
       - "internal"
     Default: "internet-facing"
-    Description: Indica si el ALB será publico (internet-facing) o interno
 
 Conditions:
   EsALBPublico: !Equals [ !Ref ALBPublico, "internet-facing" ]
 
 Resources:
 
+  ### VPC ###
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Join
+            - "-"
+            - - !Ref NombreBase
+              - Alex
+              - vpc
+
+  ### Internet Gateway ###
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  ### Route Table ###
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Join
+            - "-"
+            - - !Ref NombreBase
+              - Alex
+              - rt-public
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  ### Subred pública AZ1 ###
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Join
+            - "-"
+            - - !Ref NombreBase
+              - Alex
+              - subnet-a
+
+  ### Subred pública AZ2 ###
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Join
+            - "-"
+            - - !Ref NombreBase
+              - Alex
+              - subnet-b
+
+  ### Asociaciones ###
+  SubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetA
+      RouteTableId: !Ref PublicRouteTable
+
+  SubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetB
+      RouteTableId: !Ref PublicRouteTable
+
   ### Security Group compartido ###
   SharedSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupDescription: Permitir HTTP desde cualquier origen
-      VpcId: !Ref VpcId
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Join
+            - "-"
+            - - !Ref NombreBase
+              - Alex
+              - sg
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 80
@@ -41,15 +134,14 @@ Resources:
     Properties:
       Name: !Join
         - "-"
-        - - vivalalandingzone
+        - - !Ref NombreBase
           - Alex
-          - tg    
-      VpcId: !Ref VpcId
+          - tg
+      VpcId: !Ref VPC
       Protocol: HTTP
       Port: 80
       TargetType: instance
       HealthCheckPath: /
-      HealthCheckProtocol: HTTP
 
   ### Application Load Balancer ###
   LoadBalancer:
@@ -57,17 +149,16 @@ Resources:
     Properties:
       Name: !Join
         - "-"
-        - - vivalalandingzone
+        - - !Ref NombreBase
           - Alex
           - alb
-      Scheme: !If
-        - EsALBPublico
-        - internet-facing
-        - internal
+      Scheme: !If [ EsALBPublico, internet-facing, internal ]
       Type: application
       SecurityGroups:
         - !Ref SharedSecurityGroup
-      Subnets: !Ref PublicSubnets
+      Subnets:
+        - !Ref PublicSubnetA
+        - !Ref PublicSubnetB
 
   ### Listener ###
   Listener:
@@ -86,29 +177,24 @@ Resources:
     Properties:
       LaunchTemplateName: !Join
         - "-"
-        - - vivalalandingzone
+        - - !Ref NombreBase
           - Alex
           - lt
       LaunchTemplateData:
-        ImageId: ami-0ecb62995f68bb549 
+        ImageId: ami-0ecb62995f68bb549
         InstanceType: t2.micro
         KeyName: vockey
         SecurityGroupIds:
           - !Ref SharedSecurityGroup
-        UserData:
-          Fn::Base64: !Sub |
-            #!/bin/bash
-            apt update
-            apt install -y apache2
-            systemctl enable apache2
-            systemctl start apache2
-            echo "Servidor $(hostname)" > /var/www/html/index.html
+
 
   ### Auto Scaling Group ###
   AutoScalingGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
-      VPCZoneIdentifier: !Ref PublicSubnets
+      VPCZoneIdentifier:
+        - !Ref PublicSubnetA
+        - !Ref PublicSubnetB
       LaunchTemplate:
         LaunchTemplateId: !Ref LaunchTemplate
         Version: !GetAtt LaunchTemplate.LatestVersionNumber
