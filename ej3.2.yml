@@ -1,0 +1,157 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: VPC + Subredes privadas + RDS MySQL Multi-AZ
+
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues:
+      - Dev
+      - Prod
+    Description: Entorno de despliegue
+
+  DBName:
+    Type: String
+    Default: appdb
+
+  DBUser:
+    Type: String
+    NoEcho: true
+
+  DBPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+
+  DBEngineVersion:
+    Type: String
+    Default: "8.0.35"
+
+
+Mappings:
+  DBInstanceTypeMap:
+    Dev:
+      InstanceType: db.t3.micro
+    Prod:
+      InstanceType: db.t3.medium
+
+
+Conditions:
+  IsProd: !Equals [ !Ref Environment, Prod ]
+
+
+Resources:
+
+
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub "vpc-${Environment}"
+
+
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "private-subnet-a-${Environment}"
+
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: 10.0.2.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub "private-subnet-b-${Environment}"
+
+  AppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Acceso de la app a RDS
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "app-sg-${Environment}"
+
+
+
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Acceso MySQL solo desde la VPC
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 10.0.0.0/16
+      Tags:
+        - Key: Name
+          Value: !Sub "rds-mysql-sg-${Environment}"
+
+
+  RDSSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subredes privadas para RDS
+      SubnetIds:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+
+
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: !Sub "mysql-${Environment}"
+      Engine: mysql
+      EngineVersion: !Ref DBEngineVersion
+      DBInstanceClass: !FindInMap
+        - DBInstanceTypeMap
+        - !Ref Environment
+        - InstanceType
+      AllocatedStorage: 20
+      StorageType: gp3
+      MultiAZ: true
+      DBName: !Ref DBName
+      MasterUsername: !Ref DBUser
+      MasterUserPassword: !Ref DBPassword
+      VPCSecurityGroups:
+        - !Ref RDSSecurityGroup
+      DBSubnetGroupName: !Ref RDSSubnetGroup
+      BackupRetentionPeriod: 7
+      PubliclyAccessible: false
+      DeletionProtection: !If [ IsProd, true, false ]
+
+
+Outputs:
+  VPCId:
+    Description: ID de la VPC
+    Value: !Ref VPC
+
+  PrivateSubnets:
+    Description: Subredes privadas
+    Value: !Join
+      - ","
+      - - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+
+  RDSEndpoint:
+    Description: Endpoint de la base de datos
+    Value: !GetAtt RDSInstance.Endpoint.Address
+
+  RDSPort:
+    Description: Puerto de conexión
+    Value: !GetAtt RDSInstance.Endpoint.Port
