@@ -2,7 +2,9 @@ AWSTemplateFormatVersion: 2010-09-09
 Description: Part 2 - Add a MySQL database with CloudFormation
 
 Parameters:
-  AvailabilityZone:
+  AvailabilityZone1:
+    Type: AWS::EC2::AvailabilityZone::Name
+  AvailabilityZone2 :
     Type: AWS::EC2::AvailabilityZone::Name
   EnvironmentType:
     Description: "Specify the Environment type of the stack."
@@ -24,7 +26,6 @@ Parameters:
     Type: String
     Default: "webapp-db"
   DBUsername:
-    NoEcho: "true"
     Description: Username for MySQL database access
     Type: String
     MinLength: "1"
@@ -43,6 +44,19 @@ Parameters:
     MinLength: "1"
     MaxLength: "64"
 
+
+Rules:
+  AZsMustBeDifferent:
+    Assertions:
+      - Assert: 
+          !Not 
+            - !Equals 
+              - !Ref AvailabilityZone1
+              - !Ref AvailabilityZone2
+        AssertDescription: "AvailabilityZone1 y AvailabilityZone2 no pueden ser iguales"
+
+
+
 Mappings:
   EnvironmentToInstanceType:
     dev:
@@ -53,10 +67,118 @@ Mappings:
       InstanceType: t2.small
 
 Resources:
+
+  MyVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      Tags:
+        - Key: Name
+          Value: MyVPC
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Ref AvailabilityZone1
+      Tags:
+        - Key: Name
+          Value: PublicSubnet
+
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: 10.0.2.0/24
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !Ref AvailabilityZone1
+      Tags:
+        - Key: Name
+          Value: PrivateSubnetA
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: 10.0.3.0/24
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !Ref AvailabilityZone2
+      Tags:
+        - Key: Name
+          Value: PrivateSubnetB
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: MyIGW
+
+  AttachIGW:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref MyVPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MyVPC
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NATGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt PublicEIP.AllocationId
+      SubnetId: !Ref PublicSubnet
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MyVPC
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway
+
+  PrivateSubnetRouteTableAssociationA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetA
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetRouteTableAssociationB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetB
+      RouteTableId: !Ref PrivateRouteTable
+
   WebAppInstance:
     Type: AWS::EC2::Instance
     Properties:
-      AvailabilityZone: !Ref AvailabilityZone
+      AvailabilityZone: !Ref AvailabilityZone1
+      SubnetId: !Ref PublicSubnet
       ImageId: !Ref AmiID
       InstanceType:
         !FindInMap [
@@ -71,7 +193,8 @@ Resources:
   WebAppSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupName: !Join ["-", [webapp-security-group, !Ref EnvironmentType]]
+      VpcId: !Ref MyVPC
+      GroupName: !Join ["-", [webapp-sg, !Ref EnvironmentType]]
       GroupDescription: "Allow HTTP/HTTPS and SSH inbound and outbound traffic"
       SecurityGroupIngress:
         - IpProtocol: tcp
@@ -86,10 +209,19 @@ Resources:
           FromPort: 22
           ToPort: 22
           CidrIp: 0.0.0.0/0
+
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref MyVPC
+      GroupName: !Join ["-", [database-sg, !Ref EnvironmentType]]
+      GroupDescription: "Allow MySQL access only from WebAppSecurityGroup"
+      SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 3306
           ToPort: 3306
-          CidrIp: 0.0.0.0/0
+          SourceSecurityGroupId: !Ref WebAppSecurityGroup
+
 
   WebAppEIP:
     Type: AWS::EC2::EIP
@@ -99,13 +231,24 @@ Resources:
       Tags:
         - Key: Name
           Value: !Join ["-", [webapp-eip, !Ref EnvironmentType]]
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for RDS
+      SubnetIds:
+        - !Ref PrivateSubnetA
+        - !Ref PrivateSubnetB
+
+
 
   WebAppDatabase:
     Type: AWS::RDS::DBInstance
     Properties:
       DBInstanceIdentifier: !Ref DBInstanceIdentifier
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      PubliclyAccessible: false
       VPCSecurityGroups:
-        - !GetAtt WebAppSecurityGroup.GroupId
+        - !GetAtt DatabaseSecurityGroup.GroupId
       AllocatedStorage: "20"
       DBInstanceClass: db.t3.micro
       Engine: mysql
@@ -115,8 +258,7 @@ Resources:
       Tags:
         - Key: Name
           Value: !Join ["-", [webapp-rds, !Ref EnvironmentType]]
-    DeletionPolicy: Snapshot
-    UpdateReplacePolicy: Snapshot
+
 
 Outputs:
   WebsiteURL:
