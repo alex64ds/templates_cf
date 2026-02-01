@@ -22,7 +22,7 @@ Parameters:
       - Prod
 
 # MAPPINGS
-
+# Esta standard_ia porque stardard normal no funciona correctamente
 Mappings:
   StorageClassMap:
     Dev:
