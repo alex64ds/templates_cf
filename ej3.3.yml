@@ -1,0 +1,97 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Creación de un bucket S3 con nivel de acceso configurable y tipo de almacenamiento definido mediante mappings.
+
+Parameters:
+  BucketName:
+    Type: String
+    Description: Nombre del bucket S3 (debe ser único a nivel global)
+
+  AccessLevel:
+    Type: String
+    Description: Nivel de acceso del bucket
+    AllowedValues:
+      - Privado
+      - Publico
+    Default: Privado
+
+  StorageType:
+    Type: String
+    Description: Entorno
+    AllowedValues:
+      - Dev
+      - Prod
+
+# MAPPINGS
+
+Mappings:
+  StorageClassMap:
+    Dev:
+      StorageClass: STANDARD_IA
+    Prod:
+      StorageClass: INTELLIGENT_TIERING
+
+
+# CONDITIONS
+
+Conditions:
+  IsPublicBucket: !Equals [ !Ref AccessLevel, Publico ]
+
+
+# RESOURCES
+
+Resources:
+
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref BucketName
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: !If [IsPublicBucket, false, true]
+        BlockPublicPolicy: !If [IsPublicBucket, false, true]
+        IgnorePublicAcls: !If [IsPublicBucket, false, true]
+        RestrictPublicBuckets: !If [IsPublicBucket, false, true]
+      LifecycleConfiguration:
+        Rules:
+          - Id: ApplyStorageClassFromMapping
+            Status: Enabled
+            Transitions:
+              - StorageClass: !FindInMap
+                  - StorageClassMap
+                  - !Ref StorageType
+                  - StorageClass
+                TransitionInDays: 30
+
+      Tags:
+        - Key: Environment
+          Value: !Ref StorageType
+        - Key: StorageClass
+          Value: !FindInMap
+              - StorageClassMap
+              - !Ref StorageType
+              - StorageClass
+  S3BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Condition: IsPublicBucket
+    Properties:
+      Bucket: !Ref S3Bucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: PublicReadAccess
+            Effect: Allow
+            Principal: "*"
+            Action:
+              - s3:GetObject
+            Resource: !Sub "${S3Bucket.Arn}/*"
+
+
+# OUTPUTS
+
+Outputs:
+  BucketARN:
+    Description: ARN del bucket S3
+    Value: !GetAtt S3Bucket.Arn
+
+  BucketUploadURL:
+    Description: URL para carga de archivos en el bucket
+    Value: !Sub "https://${BucketName}.s3.amazonaws.com/"

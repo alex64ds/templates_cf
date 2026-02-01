@@ -16,16 +16,11 @@ Parameters:
 
   DBUser:
     Type: String
-    NoEcho: true
 
   DBPassword:
     Type: String
     NoEcho: true
     MinLength: 8
-
-  DBEngineVersion:
-    Type: String
-    Default: "8.0.35"
 
 
 Mappings:
@@ -107,7 +102,7 @@ Resources:
     Properties:
       DBInstanceIdentifier: !Sub "mysql-${Environment}"
       Engine: mysql
-      EngineVersion: !Ref DBEngineVersion
+      EngineVersion: 8.0.44
       DBInstanceClass: !FindInMap
         - DBInstanceTypeMap
         - !Ref Environment
