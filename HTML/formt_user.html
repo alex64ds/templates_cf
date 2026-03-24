@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prueba de API Gateway + Lambda</title>
+</head>
+<body>
+    <h1>Prueba de API Gateway + Lambda</h1>
+
+    <form id="form">
+        <label>
+            Nombre:
+            <input type="text" id="nombre" required />
+        </label>
+        <br><br>
+        <label>
+            Edad:
+            <input type="number" id="edad" required />
+        </label>
+        <br><br>
+        <button type="submit">Enviar</button>
+    </form>
+
+    <div id="respuesta"></div>
+
+    <script>
+        const API_URL = "https://q837nisnvi.execute-api.us-east-1.amazonaws.com/name_entry/prod";
+
+        document.getElementById("form").addEventListener("submit", async (event) => {
+            event.preventDefault();
+
+            const nombre = document.getElementById("nombre").value;
+            const edad = parseInt(document.getElementById("edad").value);
+            const salida = document.getElementById("respuesta");
+            salida.innerHTML = "Procesando petición...";
+
+            try {
+                const response = await fetch(API_URL, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({ nombre, edad })
+                });
+
+                const data = await response.json();
+
+                salida.innerHTML = `
+                    <strong>Respuesta del servidor:</strong><br><br>
+                    Saludo: ${data.saludo}<br>
+                    Mayor de edad: ${data.mayorDeEdad}
+                `;
+            } catch (err) {
+                console.error(err);
+                salida.innerHTML = "Error al llamar al API.";
+            }
+        });
+    </script>
+</body>
+</html>
